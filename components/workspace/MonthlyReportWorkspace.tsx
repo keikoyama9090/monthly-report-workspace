@@ -14,6 +14,7 @@ export function MonthlyReportWorkspace() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [targetMonth, setTargetMonth] = useState("");
   const [previewText, setPreviewText] = useState("");
+  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [generationCount, setGenerationCount] = useState(0);
 
@@ -105,6 +106,7 @@ export function MonthlyReportWorkspace() {
               selectedClient={selectedClient}
               onGenerate={handleGenerate}
               onTargetMonthChange={setTargetMonth}
+              onPdfChange={setPdfBase64}
             />
           </div>
 
@@ -115,6 +117,7 @@ export function MonthlyReportWorkspace() {
               text={previewText}
               targetMonth={targetMonth}
               generationCount={generationCount}
+              pdfBase64={pdfBase64}
               onTextChange={setPreviewText}
               onSave={handleSave}
             />

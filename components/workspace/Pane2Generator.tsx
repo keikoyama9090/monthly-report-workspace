@@ -20,6 +20,7 @@ interface Props {
   selectedClient: Client | null;
   onGenerate: (text: string) => void;
   onTargetMonthChange?: (month: string) => void;
+  onPdfChange?: (pdf: string | null) => void;
 }
 
 // 将来：クライアント別スキル設定（報告方針・重点項目）をここに追加
@@ -400,7 +401,7 @@ ${taxMemo || "なし（セクション2を省略すること）"}
 ・社長に動いてもらう必要がある場合は、何を・いつまでに確認すればよいかを明示する`;
 }
 
-export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange }: Props) {
+export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange, onPdfChange }: Props) {
   const [contextMemo, setContextMemo] = useState(
     "・先月からの流れ：\n・今月の特記事項：\n・経営者の認識："
   );
@@ -521,11 +522,13 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
         const masked = await applyMask(raw);
         setPdfBase64(masked);
         setIsMasked(true);
+        onPdfChange?.(masked);
       } catch (e) {
         // マスクに失敗した場合は元のPDFをそのまま使う
         console.error("マスク処理エラー:", e);
         setPdfBase64(raw);
         setIsMasked(false);
+        onPdfChange?.(raw);
       } finally {
         setIsMasking(false);
       }
@@ -556,8 +559,9 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
     setPdfName("");
     setIsMasked(false);
     setIsMasking(false);
+    onPdfChange?.(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
-  }, []);
+  }, [onPdfChange]);
 
   const n = (v: string) => parseFloat(v) || 0;
 
