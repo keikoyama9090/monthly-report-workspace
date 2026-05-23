@@ -4,9 +4,9 @@ import { useState, useCallback, useEffect } from "react";
 import { Client } from "@/lib/types";
 import { CLIENTS } from "@/lib/clients";
 import { Pane1ClientList } from "./Pane1ClientList";
-import { Pane2Generator } from "./Pane2Generator";
-import { Pane3Preview } from "./Pane3Preview";
-import { Pane4Final } from "./Pane4Final";
+import { Pane2History } from "./Pane2History";
+import { Pane3Generator } from "./Pane3Generator";
+import { Pane4Preview } from "./Pane4Preview";
 import { MousePointerClick } from "lucide-react";
 
 export function MonthlyReportWorkspace() {
@@ -91,9 +91,9 @@ export function MonthlyReportWorkspace() {
         </div>
       ) : (
         <>
-          {/* ペイン2: 過去サマリー */}
+          {/* ペイン2: 過去の履歴 */}
           <div className="h-full flex-[2] min-w-0">
-            <Pane4Final
+            <Pane2History
               selectedClient={selectedClient}
               refreshTrigger={refreshTrigger}
               targetMonth={targetMonth}
@@ -102,7 +102,7 @@ export function MonthlyReportWorkspace() {
 
           {/* ペイン3: ジェネレーター */}
           <div className="h-full flex-[3] min-w-0">
-            <Pane2Generator
+            <Pane3Generator
               selectedClient={selectedClient}
               onGenerate={handleGenerate}
               onTargetMonthChange={setTargetMonth}
@@ -112,7 +112,7 @@ export function MonthlyReportWorkspace() {
 
           {/* ペイン4: プレビュー・手直し・保存 */}
           <div className="h-full flex-[3] min-w-0">
-            <Pane3Preview
+            <Pane4Preview
               selectedClient={selectedClient}
               text={previewText}
               targetMonth={targetMonth}

@@ -401,7 +401,7 @@ ${taxMemo || "なし（セクション2を省略すること）"}
 ・社長に動いてもらう必要がある場合は、何を・いつまでに確認すればよいかを明示する`;
 }
 
-export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange, onPdfChange }: Props) {
+export function Pane3Generator({ selectedClient, onGenerate, onTargetMonthChange, onPdfChange }: Props) {
   const [contextMemo, setContextMemo] = useState(
     "・先月からの流れ：\n・今月の特記事項：\n・経営者の認識："
   );
@@ -1060,39 +1060,39 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
                 </div>
             </section>
 
-            {/* エラー */}
-            {errorMsg && (
-              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                {errorMsg}
-              </p>
-            )}
-
-            {/* 生成ボタン */}
-            <Button
-              onClick={handleGenerate}
-              disabled={!pdfBase64 || isLoading || isMasking}
-              className="w-full"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  生成中...
-                </>
-              ) : (
-                <>
-                  <Zap className="mr-2 h-4 w-4" />
-                  報告文を生成する
-                </>
-              )}
-            </Button>
-
-            {!pdfBase64 && (
-              <p className="text-center text-xs text-muted-foreground">
-                PDFをアップロードすると生成できます
-              </p>
-            )}
           </div>
         </ScrollArea>
+
+      {/* 生成ボタン（常時表示） */}
+      <div className="border-t border-border bg-background px-4 py-3">
+        {errorMsg && (
+          <p className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {errorMsg}
+          </p>
+        )}
+        <Button
+          onClick={handleGenerate}
+          disabled={!pdfBase64 || isLoading || isMasking}
+          className="w-full"
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              生成中...
+            </>
+          ) : (
+            <>
+              <Zap className="mr-2 h-4 w-4" />
+              報告文を生成する
+            </>
+          )}
+        </Button>
+        {!pdfBase64 && (
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            PDFをアップロードすると生成できます
+          </p>
+        )}
+      </div>
     </div>
   );
 }

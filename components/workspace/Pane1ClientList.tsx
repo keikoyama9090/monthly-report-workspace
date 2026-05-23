@@ -42,8 +42,8 @@ export function Pane1ClientList({ clients, selectedClient, onSelect }: Props) {
                 <div className="flex items-center gap-1.5">
                   {client.fiscalMonth !== undefined && (
                     <span className={cn(
-                      "shrink-0 text-[10px] font-medium tabular-nums",
-                      isSelected ? "text-primary-foreground/70" : "text-muted-foreground"
+                      "shrink-0 text-xs font-medium tabular-nums",
+                      isSelected ? "text-primary-foreground/80" : "text-muted-foreground"
                     )}>
                       {client.fiscalMonth}月
                     </span>
@@ -56,13 +56,6 @@ export function Pane1ClientList({ clients, selectedClient, onSelect }: Props) {
         </div>
       </ScrollArea>
 
-      {/* フッター */}
-      {selectedClient && (
-        <div className="border-t border-border px-4 py-2">
-          <p className="text-xs text-muted-foreground">選択中</p>
-          <p className="text-sm font-medium text-foreground">{selectedClient.name}</p>
-        </div>
-      )}
     </div>
   );
 }

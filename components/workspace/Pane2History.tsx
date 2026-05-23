@@ -13,7 +13,7 @@ interface Props {
   targetMonth?: string;
 }
 
-export function Pane4Final({ selectedClient, refreshTrigger, targetMonth }: Props) {
+export function Pane2History({ selectedClient, refreshTrigger, targetMonth }: Props) {
   const [history, setHistory] = useState<FinalReport[]>([]);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
