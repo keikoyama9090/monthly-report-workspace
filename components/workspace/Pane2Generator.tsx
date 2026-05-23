@@ -542,29 +542,6 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
     );
   };
 
-  // 法人税の概算表示
-  const corpCalc = (() => {
-    const pre = n(taxPreIncome);
-    const exp = n(taxYearendExpense);
-    const carry = n(taxCarryover);
-    const rate = n(taxRate);
-    const { prepaidDone: done, prepaidFuture: future } = splitPrepaid(n(taxPrepaid));
-    const taxable = pre - exp - carry;
-    const taxGross = taxable > 0 ? Math.floor((taxable * rate) / 100) : 0;
-    const taxFinal = taxGross - done - future;
-    const hasInput = pre !== 0 || exp !== 0 || carry !== 0;
-    return { taxable, taxGross, taxFinal, hasInput };
-  })();
-
-  const ctCalc = (() => {
-    const rec = n(ctReceived);
-    const paid = n(ctPaid);
-    const total = n(ctPrepaid1) + n(ctPrepaid2) + n(ctPrepaid3);
-    const ctFinal = rec - paid - total;
-    const hasInput = rec !== 0 || paid !== 0 || total !== 0;
-    return { ctFinal, hasInput };
-  })();
-
   // 納付月ラベル（対象月・決算月が揃っている場合のみ返す）
   const mLabelHelper = (offset: number): string => {
     const target = parseTargetMonth(targetMonth);
@@ -589,6 +566,29 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
     const payDate = getPaymentDate(target.year, target.month, fiscalEndMonth, 8);
     const isDone = target.year * 12 + target.month > payDate.year * 12 + payDate.month;
     return { isDone, payMonth: `${payDate.year}年${payDate.month}月` };
+  })();
+
+  // 法人税の概算表示
+  const corpCalc = (() => {
+    const pre = n(taxPreIncome);
+    const exp = n(taxYearendExpense);
+    const carry = n(taxCarryover);
+    const rate = n(taxRate);
+    const { prepaidDone: done, prepaidFuture: future } = splitPrepaid(n(taxPrepaid));
+    const taxable = pre - exp - carry;
+    const taxGross = taxable > 0 ? Math.floor((taxable * rate) / 100) : 0;
+    const taxFinal = taxGross - done - future;
+    const hasInput = pre !== 0 || exp !== 0 || carry !== 0;
+    return { taxable, taxGross, taxFinal, hasInput };
+  })();
+
+  const ctCalc = (() => {
+    const rec = n(ctReceived);
+    const paid = n(ctPaid);
+    const total = n(ctPrepaid1) + n(ctPrepaid2) + n(ctPrepaid3);
+    const ctFinal = rec - paid - total;
+    const hasInput = rec !== 0 || paid !== 0 || total !== 0;
+    return { ctFinal, hasInput };
   })();
 
   const handleGenerate = async () => {
@@ -834,7 +834,7 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
                         </option>
                       ))}
                     </select>
-                    {fiscalEndMonth === 0 && (n(taxPrepaidDone) > 0 || n(taxPrepaidFuture) > 0 || n(ctPrepaid1) > 0 || n(ctPrepaid2) > 0 || n(ctPrepaid3) > 0) && (
+                    {fiscalEndMonth === 0 && (n(taxPrepaid) > 0 || n(ctPrepaid1) > 0 || n(ctPrepaid2) > 0 || n(ctPrepaid3) > 0) && (
                       <p className="mt-1 text-xs text-destructive">
                         決算月を選択すると納付予定月が表示されます
                       </p>
