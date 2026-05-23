@@ -1,0 +1,2 @@
+# monthly-report-workspace
+bixidのモニタリングシートから月次報告を作成するジェネレーター
