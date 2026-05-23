@@ -23,6 +23,8 @@ function parseTargetMonth(str: string): { year: number; month: number } | null {
   return m ? { year: parseInt(m[1]), month: parseInt(m[2]) } : null;
 }
 
+const FIXED_FOOTER = "※本業で稼いだお金vs借入金の返済等は、借入金の長短振替（会計上の形式的な処理）が含まれるため、返済額と調達額は相殺してご確認ください。";
+
 type SendState = "idle" | "confirming" | "sending" | "success" | "error";
 
 export function Pane3Preview({ selectedClient, text, targetMonth, generationCount, onTextChange, onSave }: Props) {
@@ -67,7 +69,8 @@ export function Pane3Preview({ selectedClient, text, targetMonth, generationCoun
     setIsSaving(true);
     setSaveError("");
     try {
-      await onSave(text, y, m);
+      const fullText = `${text}\n\n${FIXED_FOOTER}`;
+      await onSave(fullText, y, m);
       setSavedMessage(`${y}年${m}月分を保存しました`);
       setTimeout(() => setSavedMessage(""), 3000);
     } catch (err) {
@@ -96,7 +99,7 @@ export function Pane3Preview({ selectedClient, text, targetMonth, generationCoun
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           roomId: selectedClient.chatworkRoomId,
-          message: text,
+          message: `${text}\n\n${FIXED_FOOTER}`,
         }),
       });
       const data = await response.json();
@@ -228,6 +231,13 @@ export function Pane3Preview({ selectedClient, text, targetMonth, generationCoun
               placeholder="ジェネレーターで生成した文章がここに表示されます。直接入力して手直しすることもできます。"
               className="min-h-0 flex-1 resize-none font-mono text-sm leading-relaxed"
             />
+
+            {/* 固定フッター（常時表示・編集不可） */}
+            {text.trim() && (
+              <div className="shrink-0 rounded-md border border-border bg-muted/20 px-3 py-2">
+                <p className="text-xs leading-relaxed text-muted-foreground">{FIXED_FOOTER}</p>
+              </div>
+            )}
 
             {/* 保存・送信バー */}
             <div className="shrink-0 rounded-md border border-border bg-muted/30 px-3 py-2">

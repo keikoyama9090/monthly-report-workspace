@@ -5,7 +5,7 @@ import { Client, FinalReport } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Archive, ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight } from "lucide-react";
 
 interface Props {
   selectedClient: Client | null;
@@ -16,7 +16,6 @@ interface Props {
 export function Pane4Final({ selectedClient, refreshTrigger, targetMonth }: Props) {
   const [history, setHistory] = useState<FinalReport[]>([]);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [fullTextKey, setFullTextKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedClient) {
@@ -47,7 +46,6 @@ export function Pane4Final({ selectedClient, refreshTrigger, targetMonth }: Prop
 
   const toggleExpand = (key: string) => {
     setExpandedKey((prev) => (prev === key ? null : key));
-    setFullTextKey(null);
   };
 
   const buildKey = (r: FinalReport) => `${r.year}_${r.month}`;
@@ -124,33 +122,9 @@ export function Pane4Final({ selectedClient, refreshTrigger, targetMonth }: Prop
                       <>
                         <Separator />
                         <div className="bg-muted/20 p-3">
-                          {fullTextKey === key ? (
-                            <>
-                              <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
-                                {report.text}
-                              </p>
-                              <button
-                                onClick={() => setFullTextKey(null)}
-                                className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                              >
-                                <ChevronUp className="h-3 w-3" />
-                                折りたたむ
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <p className="line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-foreground">
-                                {report.text}
-                              </p>
-                              <button
-                                onClick={() => setFullTextKey(key)}
-                                className="mt-2 flex items-center gap-1 text-xs text-primary hover:underline"
-                              >
-                                <ChevronDown className="h-3 w-3" />
-                                全文を見る
-                              </button>
-                            </>
-                          )}
+                          <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+                            {report.text}
+                          </p>
                         </div>
                       </>
                     )}

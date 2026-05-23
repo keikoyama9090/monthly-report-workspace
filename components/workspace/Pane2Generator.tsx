@@ -101,6 +101,30 @@ function getPaymentDate(
   return { year: Math.floor(total / 12), month: (total % 12) + 1 };
 }
 
+// 報告文テキストから予定納税（円）を抽出する
+// buildFutureTaxScheduleText が末尾に追記する形式に対応：
+// 「法人税（将来納付分）：5,000,000円」「法人税（中間納付・支払済）：5,000,000円」
+// 「消費税（中間納付 第1回）：...円」「消費税（中間納付 第2回）：...円」「消費税（中間納付 第3回）：...円」
+function parsePrepaidYenFromText(text: string): {
+  taxPrepaid: string;
+  ctPrepaid1: string;
+  ctPrepaid2: string;
+  ctPrepaid3: string;
+} {
+  const parseYen = (pattern: RegExp): string => {
+    const m = text.match(pattern);
+    if (!m) return "";
+    const yen = parseInt(m[1].replace(/,/g, ""), 10);
+    return isNaN(yen) || yen === 0 ? "" : String(yen);
+  };
+  return {
+    taxPrepaid: parseYen(/法人税（(?:将来納付分|中間納付・支払済)）：([\d,]+)円/),
+    ctPrepaid1: parseYen(/消費税（中間納付 第1回）：([\d,]+)円/),
+    ctPrepaid2: parseYen(/消費税（中間納付 第2回）：([\d,]+)円/),
+    ctPrepaid3: parseYen(/消費税（中間納付 第3回）：([\d,]+)円/),
+  };
+}
+
 function buildFutureTaxScheduleText(
   targetMonthStr: string,
   fiscalEndMonth: number,
@@ -381,11 +405,20 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
     "・先月からの流れ：\n・今月の特記事項：\n・経営者の認識："
   );
   const [targetMonth, setTargetMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}年${now.getMonth() + 1}月`;
+    const prev = new Date();
+    prev.setMonth(prev.getMonth() - 1);
+    return `${prev.getFullYear()}年${prev.getMonth() + 1}月`;
   });
-  const [targetYear, setTargetYear] = useState(() => new Date().getFullYear());
-  const [targetMonthNum, setTargetMonthNum] = useState(() => new Date().getMonth() + 1);
+  const [targetYear, setTargetYear] = useState(() => {
+    const prev = new Date();
+    prev.setMonth(prev.getMonth() - 1);
+    return prev.getFullYear();
+  });
+  const [targetMonthNum, setTargetMonthNum] = useState(() => {
+    const prev = new Date();
+    prev.setMonth(prev.getMonth() - 1);
+    return prev.getMonth() + 1;
+  });
 
   const handleYearChange = (y: number) => {
     setTargetYear(y);
@@ -458,6 +491,16 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
   const [taxCarryover, setTaxCarryover] = useState("");
   const [taxRate, setTaxRate] = useState("30");
   const [taxPrepaid, setTaxPrepaid] = useState("");
+
+  // 前月レポートが取得されたとき、予定納税額を自動入力（未入力の場合のみ）
+  useEffect(() => {
+    if (!prevMonthReport) return;
+    const parsed = parsePrepaidYenFromText(prevMonthReport.text);
+    if (parsed.taxPrepaid) setTaxPrepaid(parsed.taxPrepaid);
+    if (parsed.ctPrepaid1) setCtPrepaid1(parsed.ctPrepaid1);
+    if (parsed.ctPrepaid2) setCtPrepaid2(parsed.ctPrepaid2);
+    if (parsed.ctPrepaid3) setCtPrepaid3(parsed.ctPrepaid3);
+  }, [prevMonthReport]);
   const [ctReceived, setCtReceived] = useState("");
   const [ctPaid, setCtPaid] = useState("");
   const [ctPrepaid1, setCtPrepaid1] = useState("");
