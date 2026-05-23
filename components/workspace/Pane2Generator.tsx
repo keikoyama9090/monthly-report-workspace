@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
-import { Client } from "@/lib/types";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { PDFDocument, rgb } from "pdf-lib";
+import { Client, FinalReport } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -12,8 +13,6 @@ import {
   Zap,
   FileText,
   X,
-  ChevronDown,
-  ChevronUp,
   Loader2,
 } from "lucide-react";
 
@@ -25,6 +24,58 @@ interface Props {
 
 // 将来：クライアント別スキル設定（報告方針・重点項目）をここに追加
 // const clientSkill = useClientSkill(selectedClient?.id);
+
+// BISAIDEモニタリングシートの会社名座標（PyMuPDF準拠: 左上原点）
+// MASK_RECT = fitz.Rect(15, 98, 210, 120)
+const MASK_X = 15;
+const MASK_Y_TOP = 98;    // PyMuPDFのtop（上からの距離）
+const MASK_Y_BOTTOM = 120; // PyMuPDFのbottom
+const MASK_WIDTH = 210 - 15;   // 195
+const MASK_HEIGHT = 120 - 98;  // 22
+
+// Base64 → Uint8Array（大容量PDF対応）
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Uint8Array → Base64（大容量PDF対応・スタックオーバーフロー回避）
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function applyMask(base64: string): Promise<string> {
+  const bytes = base64ToUint8Array(base64);
+  const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const pages = pdfDoc.getPages();
+
+  for (const page of pages) {
+    const { height } = page.getSize();
+    // pdf-libは左下原点なのでy座標を変換
+    const y = height - MASK_Y_BOTTOM;
+    page.drawRectangle({
+      x: MASK_X,
+      y,
+      width: MASK_WIDTH,
+      height: MASK_HEIGHT,
+      color: rgb(1, 1, 1),
+      borderWidth: 0,
+    });
+  }
+
+  const maskedBytes = await pdfDoc.save();
+  return uint8ArrayToBase64(maskedBytes);
+}
 
 // 万円表示（小数第1位）
 function toMan(yen: number) {
@@ -48,6 +99,72 @@ function getPaymentDate(
   const baseMonth = fiscalEndMonth;
   const total = baseYear * 12 + baseMonth - 1 + offsetMonths;
   return { year: Math.floor(total / 12), month: (total % 12) + 1 };
+}
+
+function buildFutureTaxScheduleText(
+  targetMonthStr: string,
+  fiscalEndMonth: number,
+  corp: { prepaidDone: number; prepaidFuture: number },
+  ct: { prepaid1: number; prepaid2: number; prepaid3: number }
+): string {
+  type PayItem = { label: string; amount: number; date: { year: number; month: number } | null };
+
+  const target = parseTargetMonth(targetMonthStr);
+  const canCalc = !!target && !!fiscalEndMonth;
+
+  const dateOf = (offset: number): { year: number; month: number } | null => {
+    if (!canCalc) return null;
+    return getPaymentDate(target!.year, target!.month, fiscalEndMonth, offset);
+  };
+
+  const items: PayItem[] = [];
+  if (ct.prepaid1 > 0)      items.push({ label: "消費税（中間納付 第1回）", amount: ct.prepaid1,      date: dateOf(5)  });
+  if (ct.prepaid2 > 0)      items.push({ label: "消費税（中間納付 第2回）", amount: ct.prepaid2,      date: dateOf(8)  });
+  if (ct.prepaid3 > 0)      items.push({ label: "消費税（中間納付 第3回）", amount: ct.prepaid3,      date: dateOf(11) });
+  if (corp.prepaidFuture > 0) items.push({ label: "法人税（将来納付分）",    amount: corp.prepaidFuture, date: dateOf(8)  });
+  if (corp.prepaidDone > 0)   items.push({ label: "法人税（中間納付・支払済）", amount: corp.prepaidDone,   date: dateOf(8)  });
+
+  if (items.length === 0) return "";
+
+  const fmtYen = (yen: number) => `${Math.round(yen).toLocaleString()}円`;
+
+  const header = "📅 将来の納税予測\n今後の資金計画のご参考に、納税スケジュールをまとめました。";
+
+  if (!canCalc) {
+    const bodyLines = ["※ 決算月・対象月を設定すると納付予定月が表示されます"];
+    for (const item of items) bodyLines.push(`${item.label}：${fmtYen(item.amount)}`);
+    const total = items.reduce((s, i) => s + i.amount, 0);
+    bodyLines.push(`👉 全体の合計納税額：${fmtYen(total)}`);
+    return `${header}\n${bodyLines.join("\n")}`;
+  }
+
+  // 月ごとにグループ化（"YYYY-MM" をキーにソート）
+  const groupMap = new Map<string, { year: number; month: number; items: PayItem[] }>();
+  for (const item of items) {
+    if (!item.date) continue;
+    const key = `${item.date.year}-${String(item.date.month).padStart(2, "0")}`;
+    if (!groupMap.has(key)) groupMap.set(key, { year: item.date.year, month: item.date.month, items: [] });
+    groupMap.get(key)!.items.push(item);
+  }
+  const groups = [...groupMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, g]) => g);
+
+  const blocks: string[] = [];
+  for (const g of groups) {
+    const block: string[] = [`${g.year}年 ${g.month}月`];
+    for (const item of g.items) block.push(`${item.label}：${fmtYen(item.amount)}`);
+    if (g.items.length > 1) {
+      const sub = g.items.reduce((s, i) => s + i.amount, 0);
+      block.push(`※${g.month}月の合計支払額：${fmtYen(sub)}`);
+    }
+    blocks.push(block.join("\n"));
+  }
+
+  const grandTotal = items.reduce((s, i) => s + i.amount, 0);
+  blocks.push(`👉 全体の合計納税額：${fmtYen(grandTotal)}`);
+
+  return `${header}\n${blocks.join("\n")}`;
 }
 
 function buildTaxMemo(
@@ -140,14 +257,19 @@ function buildTaxMemo(
 function buildPrompt(
   targetMonth: string,
   contextMemo: string,
-  taxMemo: string
+  taxMemo: string,
+  prevMonthReport?: FinalReport | null
 ): string {
+  const prevSection = prevMonthReport
+    ? `\n【前月報告文（${prevMonthReport.year}年${prevMonthReport.month}月分・参考）】\n${prevMonthReport.text}\n\n※ 前月の報告文を踏まえ、今月の変化・進捗を連続性のある文脈で記述すること。ただし前月の内容を繰り返すのではなく、今月の論点に集中すること。\n`
+    : "";
+
   return `以下のモニタリングデータと今月のトピック・サジェストをもとに、クライアント経営者へのChatwork報告文を作成してください。
 なお、モニタリングシート（PDF）は別途添付されるため、文章中に数字を羅列する必要はありません。
 「どの数字を・なぜ・どう判断すべきか」を伝えることに集中してください。
 
 対象月：${targetMonth || "（未入力）"}
-
+${prevSection}
 【今月のトピック・サジェスト】
 ${contextMemo || "（未入力）"}
 
@@ -191,8 +313,9 @@ ${taxMemo || "なし（セクション2を省略すること）"}
 キャッシュ増減・キャッシュ残高・有利子負債の3点は必ず数字付きで言及する
 
 【フォーマット】
-・冒頭に「📋 〇〇年〇月度 業績報告」を1行入れる
+・冒頭に「📋 〇〇年〇月度 業績報告をお送りいたします。」を1行入れる
 ・以下の絵文字見出し＋1〜2文の文章構成にする
+・💡 トピックは「ポジティブな話題」→「要確認・要アクション事項」の順に書く
 
 📊 損益
 （1〜2文、「〜です」「〜ます」で締める）
@@ -245,31 +368,96 @@ ${taxMemo || "なし（セクション2を省略すること）"}
 ・前期比は「前期比+30.7%増」「前期比▲5%減」のように増減で表現する
 ・体言止め禁止、必ず文章で締める
 ・評価的な決めつけ表現（「財務体質は着実に強化されています」等）は使わない
-・見出し間は1行空ける`;
+・見出し間は1行空ける
+・「大幅に」「非常に」「極めて」などの強調形容詞は使わない。数字が事実を語るため不要
+・「ございます」は使わない。「です」「ます」に統一する
+・問題提起だけで終わらない。必ず税理士としての仮説または判断を一文添える
+・アクションを促す場合は「〜いかがでしょうか」ではなく「〜と考えています」「〜確認させてください」と言い切る
+・社長に動いてもらう必要がある場合は、何を・いつまでに確認すればよいかを明示する`;
 }
 
 export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange }: Props) {
   const [contextMemo, setContextMemo] = useState(
     "・先月からの流れ：\n・今月の特記事項：\n・経営者の認識："
   );
-  const [targetMonth, setTargetMonth] = useState("");
+  const [targetMonth, setTargetMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}年${now.getMonth() + 1}月`;
+  });
+  const [targetYear, setTargetYear] = useState(() => new Date().getFullYear());
+  const [targetMonthNum, setTargetMonthNum] = useState(() => new Date().getMonth() + 1);
+
+  const handleYearChange = (y: number) => {
+    setTargetYear(y);
+    const str = `${y}年${targetMonthNum}月`;
+    setTargetMonth(str);
+    onTargetMonthChange?.(str);
+  };
+
+  const handleMonthNumChange = (m: number) => {
+    setTargetMonthNum(m);
+    const str = `${targetYear}年${m}月`;
+    setTargetMonth(str);
+    onTargetMonthChange?.(str);
+  };
+  const [prevMonthReport, setPrevMonthReport] = useState<FinalReport | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState("");
+  const [isMasking, setIsMasking] = useState(false);
+  const [isMasked, setIsMasked] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [showTax, setShowTax] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 初期値を親に通知
+  useEffect(() => {
+    onTargetMonthChange?.(targetMonth);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 対象月・クライアントが変わったら前月レポートをNotionから自動取得
+  useEffect(() => {
+    if (!selectedClient || !targetMonth) {
+      setPrevMonthReport(null);
+      return;
+    }
+    const m = targetMonth.match(/(\d{4})[年\/\-](\d{1,2})/);
+    if (!m) {
+      setPrevMonthReport(null);
+      return;
+    }
+    const year = parseInt(m[1]);
+    const month = parseInt(m[2]);
+    const prevYear = month === 1 ? year - 1 : year;
+    const prevMonth = month === 1 ? 12 : month - 1;
+
+    const idParam = selectedClient.notionPageId
+      ? `clientNotionPageId=${encodeURIComponent(selectedClient.notionPageId)}`
+      : `clientName=${encodeURIComponent(selectedClient.name)}`;
+    fetch(`/api/notion/reports?${idParam}&year=${prevYear}&month=${prevMonth}`)
+      .then((r) => r.json())
+      .then((data: { reports?: FinalReport[] }) => {
+        setPrevMonthReport(data.reports?.[0] ?? null);
+      })
+      .catch(() => setPrevMonthReport(null));
+  }, [targetMonth, selectedClient]);
+
   // 納税予測フォームの状態
   const [fiscalEndMonth, setFiscalEndMonth] = useState(0);
+
+  // クライアントが変わったら決算月を自動反映
+  useEffect(() => {
+    if (selectedClient?.fiscalMonth) {
+      setFiscalEndMonth(selectedClient.fiscalMonth);
+    }
+  }, [selectedClient]);
   const [taxPreIncome, setTaxPreIncome] = useState("");
   const [taxYearendExpense, setTaxYearendExpense] = useState("");
   const [taxYearendNote, setTaxYearendNote] = useState("");
   const [taxCarryover, setTaxCarryover] = useState("");
   const [taxRate, setTaxRate] = useState("30");
-  const [taxPrepaidDone, setTaxPrepaidDone] = useState("");
-  const [taxPrepaidFuture, setTaxPrepaidFuture] = useState("");
+  const [taxPrepaid, setTaxPrepaid] = useState("");
   const [ctReceived, setCtReceived] = useState("");
   const [ctPaid, setCtPaid] = useState("");
   const [ctPrepaid1, setCtPrepaid1] = useState("");
@@ -278,10 +466,26 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
 
   const loadPDF = useCallback((file: File) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const result = e.target?.result as string;
-      setPdfBase64(result.split(",")[1]);
+      const raw = result.split(",")[1];
       setPdfName(file.name);
+      setIsMasked(false);
+      setIsMasking(true);
+      // Reactが「処理中」を描画できるよう、次のフレームまで待つ
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      try {
+        const masked = await applyMask(raw);
+        setPdfBase64(masked);
+        setIsMasked(true);
+      } catch (e) {
+        // マスクに失敗した場合は元のPDFをそのまま使う
+        console.error("マスク処理エラー:", e);
+        setPdfBase64(raw);
+        setIsMasked(false);
+      } finally {
+        setIsMasking(false);
+      }
     };
     reader.readAsDataURL(file);
   }, []);
@@ -307,13 +511,16 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
   const removePDF = useCallback(() => {
     setPdfBase64(null);
     setPdfName("");
+    setIsMasked(false);
+    setIsMasking(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
   const n = (v: string) => parseFloat(v) || 0;
 
-  const getTaxMemo = () =>
-    buildTaxMemo(
+  const getTaxMemo = () => {
+    const { prepaidDone, prepaidFuture } = splitPrepaid(n(taxPrepaid));
+    return buildTaxMemo(
       targetMonth,
       fiscalEndMonth,
       {
@@ -322,8 +529,8 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
         yearendNote: taxYearendNote,
         carryover: n(taxCarryover),
         rate: n(taxRate),
-        prepaidDone: n(taxPrepaidDone),
-        prepaidFuture: n(taxPrepaidFuture),
+        prepaidDone,
+        prepaidFuture,
       },
       {
         received: n(ctReceived),
@@ -333,6 +540,7 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
         prepaid3: n(ctPrepaid3),
       }
     );
+  };
 
   // 法人税の概算表示
   const corpCalc = (() => {
@@ -340,8 +548,7 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
     const exp = n(taxYearendExpense);
     const carry = n(taxCarryover);
     const rate = n(taxRate);
-    const done = n(taxPrepaidDone);
-    const future = n(taxPrepaidFuture);
+    const { prepaidDone: done, prepaidFuture: future } = splitPrepaid(n(taxPrepaid));
     const taxable = pre - exp - carry;
     const taxGross = taxable > 0 ? Math.floor((taxable * rate) / 100) : 0;
     const taxFinal = taxGross - done - future;
@@ -358,13 +565,39 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
     return { ctFinal, hasInput };
   })();
 
+  // 納付月ラベル（対象月・決算月が揃っている場合のみ返す）
+  const mLabelHelper = (offset: number): string => {
+    const target = parseTargetMonth(targetMonth);
+    if (!target || !fiscalEndMonth) return "";
+    const d = getPaymentDate(target.year, target.month, fiscalEndMonth, offset);
+    return `${d.year}年${d.month}月`;
+  };
+
+  // 予定納税が既納付か将来納付かを自動判定
+  // 決算月から算出した納付予定月（offset=8）より報告月が後なら既納付
+  const splitPrepaid = (amount: number): { prepaidDone: number; prepaidFuture: number } => {
+    const target = parseTargetMonth(targetMonth);
+    if (!target || !fiscalEndMonth || amount === 0) return { prepaidDone: 0, prepaidFuture: amount };
+    const payDate = getPaymentDate(target.year, target.month, fiscalEndMonth, 8);
+    const isDone = target.year * 12 + target.month > payDate.year * 12 + payDate.month;
+    return isDone ? { prepaidDone: amount, prepaidFuture: 0 } : { prepaidDone: 0, prepaidFuture: amount };
+  };
+
+  const prepaidStatus = (() => {
+    const target = parseTargetMonth(targetMonth);
+    if (!target || !fiscalEndMonth) return null;
+    const payDate = getPaymentDate(target.year, target.month, fiscalEndMonth, 8);
+    const isDone = target.year * 12 + target.month > payDate.year * 12 + payDate.month;
+    return { isDone, payMonth: `${payDate.year}年${payDate.month}月` };
+  })();
+
   const handleGenerate = async () => {
     if (!pdfBase64) return;
     setIsLoading(true);
     setErrorMsg("");
 
     const taxMemo = getTaxMemo();
-    const prompt = buildPrompt(targetMonth, contextMemo, taxMemo);
+    const prompt = buildPrompt(targetMonth, contextMemo, taxMemo, prevMonthReport);
 
     try {
       const response = await fetch("/api/generate", {
@@ -406,7 +639,14 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
             content?: { type: string; text?: string }[];
           }
         ).content?.find((b) => b.type === "text")?.text || "";
-      onGenerate(text);
+
+      const scheduleText = buildFutureTaxScheduleText(
+        targetMonth,
+        fiscalEndMonth,
+        splitPrepaid(n(taxPrepaid)),
+        { prepaid1: n(ctPrepaid1), prepaid2: n(ctPrepaid2), prepaid3: n(ctPrepaid3) }
+      );
+      onGenerate(scheduleText ? `${text}\n\n${scheduleText}` : text);
     } catch (err) {
       setErrorMsg(
         `エラー：${err instanceof Error ? err.message : "不明なエラー"}`
@@ -441,55 +681,80 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
             ジェネレーター
           </span>
         </div>
-        {selectedClient ? (
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {selectedClient.name} の報告文を生成
-          </p>
-        ) : (
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            クライアントを選択してください
-          </p>
-        )}
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {selectedClient?.name} の報告文を生成
+        </p>
       </div>
 
-      {!selectedClient ? (
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground">
-            クライアントを選択してください
-          </p>
-        </div>
-      ) : (
-        <ScrollArea className="h-0 flex-1">
+      <ScrollArea className="h-0 flex-1">
           <div className="flex flex-col gap-4 p-4">
-            {/* 文脈メモ */}
+            {/* 対象月 */}
             <section>
               <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                文脈メモ
+                ① 対象月
               </p>
-              <Textarea
-                value={contextMemo}
-                onChange={(e) => setContextMemo(e.target.value)}
-                className="min-h-[80px] resize-none text-sm"
-              />
+              <div className="flex items-center gap-2">
+                <select
+                  value={targetYear}
+                  onChange={(e) => handleYearChange(parseInt(e.target.value))}
+                  className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                >
+                  {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 2 + i).map((y) => (
+                    <option key={y} value={y}>{y}年</option>
+                  ))}
+                </select>
+                <select
+                  value={targetMonthNum}
+                  onChange={(e) => handleMonthNumChange(parseInt(e.target.value))}
+                  className="w-24 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                >
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                    <option key={m} value={m}>{m}月</option>
+                  ))}
+                </select>
+              </div>
+              {prevMonthReport ? (
+                <p className="mt-1.5 flex items-center gap-1 text-xs text-green-600">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                  {prevMonthReport.year}年{prevMonthReport.month}月の報告文をコンテキストに注入します
+                </p>
+              ) : targetMonth ? (
+                <p className="mt-1.5 text-xs text-muted-foreground/60">
+                  前月の保存済み報告文なし（注入スキップ）
+                </p>
+              ) : null}
             </section>
 
             {/* PDFドロップ */}
             <section>
               <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                ① モニタリングシート（PDF）
+                ② モニタリングシート（PDF）
               </p>
-              {pdfBase64 ? (
-                <div className="flex items-center gap-2 rounded-md border border-primary bg-primary/10 px-3 py-2.5">
-                  <FileText className="h-4 w-4 shrink-0 text-primary" />
-                  <span className="flex-1 truncate text-sm font-medium text-primary">
-                    {pdfName}
-                  </span>
-                  <button
-                    onClick={removePDF}
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+              {isMasking ? (
+                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2.5">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">会社名をマスク処理中...</span>
+                </div>
+              ) : pdfBase64 ? (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2 rounded-md border border-primary bg-primary/10 px-3 py-2.5">
+                    <FileText className="h-4 w-4 shrink-0 text-primary" />
+                    <span className="flex-1 truncate text-sm font-medium text-primary">
+                      {pdfName}
+                    </span>
+                    <button
+                      onClick={removePDF}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  {isMasked && (
+                    <div className="flex items-center gap-1.5 px-1">
+                      <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                      <span className="text-xs text-green-600">会社名をマスク済み（Anthropicには送信されません）</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div
@@ -525,50 +790,42 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
               />
             </section>
 
-            {/* 対象月 */}
+            {/* 文脈メモ */}
             <section>
               <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                ② 対象月
+                ③ 文脈メモ
               </p>
-              <Input
-                type="text"
-                value={targetMonth}
-                onChange={(e) => {
-                  setTargetMonth(e.target.value);
-                  onTargetMonthChange?.(e.target.value);
-                }}
-                placeholder="例：2026年4月"
-                className="text-sm"
+              <Textarea
+                value={contextMemo}
+                onChange={(e) => setContextMemo(e.target.value)}
+                className="min-h-[80px] resize-none text-sm"
               />
             </section>
 
-            {/* 納税予測（折りたたみ） */}
+            {/* 納税予測（常時表示） */}
             <section>
-              <button
-                onClick={() => setShowTax(!showTax)}
-                className="flex w-full items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted"
-              >
-                <span>③ 納税予測（任意）</span>
-                {showTax ? (
-                  <ChevronUp className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                )}
-              </button>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                ④ 納税予測（任意）
+              </p>
 
-              {showTax && (
-                <div className="mt-2 flex flex-col gap-3 rounded-md border border-border p-3">
+              <div className="flex flex-col gap-3 rounded-md border border-border p-3">
                   {/* 決算月 */}
                   <div>
                     <label className="mb-1 block text-xs text-muted-foreground">
                       ① 決算月
+                      {fiscalEndMonth === 0 && (
+                        <span className="ml-1.5 text-destructive">※ 納付月の計算に必要</span>
+                      )}
                     </label>
                     <select
                       value={fiscalEndMonth}
                       onChange={(e) =>
                         setFiscalEndMonth(parseInt(e.target.value))
                       }
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                      className={cn(
+                        "w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary",
+                        fiscalEndMonth === 0 ? "border-destructive/60" : "border-border"
+                      )}
                     >
                       <option value={0}>― 選択 ―</option>
                       {Array.from({ length: 12 }, (_, i) => (
@@ -577,6 +834,11 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
                         </option>
                       ))}
                     </select>
+                    {fiscalEndMonth === 0 && (n(taxPrepaidDone) > 0 || n(taxPrepaidFuture) > 0 || n(ctPrepaid1) > 0 || n(ctPrepaid2) > 0 || n(ctPrepaid3) > 0) && (
+                      <p className="mt-1 text-xs text-destructive">
+                        決算月を選択すると納付予定月が表示されます
+                      </p>
+                    )}
                   </div>
 
                   <Separator />
@@ -632,20 +894,41 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">
-                        ⑥ 予定納税（既納付）（円）
-                      </label>
-                      {numInput(taxPrepaidDone, setTaxPrepaidDone)}
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">
-                        ⑦ 予定納税（将来納付）（円）
-                      </label>
-                      {numInput(taxPrepaidFuture, setTaxPrepaidFuture)}
-                    </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">
+                      ⑥ 予定納税（円）
+                      {prepaidStatus && (
+                        <span className={cn(
+                          "ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                          prepaidStatus.isDone
+                            ? "bg-muted text-muted-foreground"
+                            : "bg-primary/10 text-primary"
+                        )}>
+                          {prepaidStatus.isDone
+                            ? `既納付（${prepaidStatus.payMonth}支払済）`
+                            : `将来納付（${prepaidStatus.payMonth}予定）`}
+                        </span>
+                      )}
+                    </label>
+                    {numInput(taxPrepaid, setTaxPrepaid)}
+                    {!prepaidStatus && n(taxPrepaid) > 0 && (
+                      <p className="mt-1 text-[10px] text-muted-foreground/60">
+                        ※ 対象月・決算月を設定すると既納付/将来納付を自動判定します
+                      </p>
+                    )}
                   </div>
+
+                  {n(taxPrepaid) > 0 && prepaidStatus && (
+                    <div className="rounded-md border border-primary/20 bg-primary/5 p-2 text-xs space-y-0.5">
+                      <div className="text-muted-foreground">
+                        {prepaidStatus.isDone ? "既納付額" : "将来納付額"}
+                        （{prepaidStatus.payMonth}）：
+                        <span className={cn("font-semibold", prepaidStatus.isDone ? "text-foreground" : "text-primary")}>
+                          {n(taxPrepaid).toLocaleString()}円
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   <Separator />
                   <p className="text-xs font-semibold text-primary">消費税</p>
@@ -685,6 +968,40 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
                     </div>
                   </div>
 
+                  {(n(ctPrepaid1) > 0 || n(ctPrepaid2) > 0 || n(ctPrepaid3) > 0) && (() => {
+                    const m1 = mLabelHelper(5);
+                    const m2 = mLabelHelper(8);
+                    const m3 = mLabelHelper(11);
+                    return (
+                      <div className="rounded-md border border-primary/20 bg-primary/5 p-2 text-xs space-y-0.5">
+                        {n(ctPrepaid1) > 0 && (
+                          <div className="text-muted-foreground">
+                            第1回{m1 && `（${m1}）`}：
+                            <span className="font-semibold text-foreground">
+                              {n(ctPrepaid1).toLocaleString()}円
+                            </span>
+                          </div>
+                        )}
+                        {n(ctPrepaid2) > 0 && (
+                          <div className="text-muted-foreground">
+                            第2回{m2 && `（${m2}）`}：
+                            <span className="font-semibold text-foreground">
+                              {n(ctPrepaid2).toLocaleString()}円
+                            </span>
+                          </div>
+                        )}
+                        {n(ctPrepaid3) > 0 && (
+                          <div className="text-muted-foreground">
+                            第3回{m3 && `（${m3}）`}：
+                            <span className="font-semibold text-primary">
+                              {n(ctPrepaid3).toLocaleString()}円
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {ctCalc.hasInput && (
                     <div className="rounded-md bg-muted/50 p-2 text-xs">
                       <span className="font-semibold text-primary">
@@ -694,7 +1011,6 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
                     </div>
                   )}
                 </div>
-              )}
             </section>
 
             {/* エラー */}
@@ -707,7 +1023,7 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
             {/* 生成ボタン */}
             <Button
               onClick={handleGenerate}
-              disabled={!pdfBase64 || isLoading}
+              disabled={!pdfBase64 || isLoading || isMasking}
               className="w-full"
             >
               {isLoading ? (
@@ -730,7 +1046,6 @@ export function Pane2Generator({ selectedClient, onGenerate, onTargetMonthChange
             )}
           </div>
         </ScrollArea>
-      )}
     </div>
   );
 }

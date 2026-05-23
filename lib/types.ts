@@ -1,6 +1,9 @@
 export interface Client {
   id: string;
   name: string;
+  chatworkRoomId?: string;
+  notionPageId?: string;
+  fiscalMonth?: number;
 }
 
 export interface FinalReport {

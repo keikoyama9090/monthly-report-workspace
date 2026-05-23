@@ -1,11 +1,12 @@
 import { Client } from "./types";
 
 // クライアントマスタ（将来的にDB接続に差し替え可能）
+// chatworkRoomId: ChatworkのルームID（未設定の場合は送信ボタンが非表示になる）
 export const CLIENTS: Client[] = [
-  { id: "kobayashi-kenzai", name: "小林建材" },
-  { id: "kanagawa-gangu", name: "神奈川玩具" },
-  { id: "fusousha", name: "扶桑社" },
-  { id: "ashigara-kanko", name: "足柄観光バス" },
+  { id: "kobayashi-kenzai", name: "小林建材", chatworkRoomId: "YOUR_ROOM_ID_1" },
+  { id: "kanagawa-gangu", name: "神奈川玩具", chatworkRoomId: "YOUR_ROOM_ID_2" },
+  { id: "fusousha", name: "扶桑社", chatworkRoomId: "YOUR_ROOM_ID_3" },
+  { id: "ashigara-kanko", name: "足柄観光バス", chatworkRoomId: "YOUR_ROOM_ID_4" },
   { id: "client-05", name: "サンプル商事05" },
   { id: "client-06", name: "サンプル商事06" },
   { id: "client-07", name: "サンプル商事07" },
