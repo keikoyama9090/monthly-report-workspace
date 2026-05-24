@@ -53,12 +53,6 @@ export function Pane4Preview({ selectedClient, text, targetMonth, generationCoun
   const [isApplying, setIsApplying] = useState(false);
   const [prevText, setPrevText] = useState<string | null>(null); // 元に戻す用
 
-  // テキスト変更で採点結果をクリア
-  useEffect(() => {
-    if (gradeResult) setGradeResult(null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text]);
-
   // クライアント変更で採点結果をリセット
   useEffect(() => {
     setGradeResult(null);
